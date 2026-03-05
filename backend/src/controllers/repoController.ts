@@ -58,11 +58,15 @@ export async function triggerIndexing(req: AuthenticatedRequest, res: Response, 
   try {
     if (!req.user) throw new AppError(401, 'Not authenticated');
 
-    const { projectId, gitlabBaseUrl, branch } = req.body;
+    const { projectId, branch } = req.body;
 
-    if (!projectId || !gitlabBaseUrl || !branch) {
-      throw new AppError(400, 'Missing projectId, gitlabBaseUrl, or branch');
+    if (!projectId || !branch) {
+      throw new AppError(400, 'Missing projectId or branch');
     }
+
+    // Use the stored GitLab base URL from user config (not user-supplied input)
+    const gitlab = await getDecryptedGitlabToken(req.user.userId);
+    const gitlabBaseUrl = gitlab.baseUrl;
 
     // Check if already indexing
     const existingRepo = await findRepo(projectId, gitlabBaseUrl);
@@ -78,9 +82,6 @@ export async function triggerIndexing(req: AuthenticatedRequest, res: Response, 
       });
       return;
     }
-
-    // Get user's GitLab token
-    const gitlab = await getDecryptedGitlabToken(req.user.userId);
 
     // Create or update repo record
     const repo = await createRepo({

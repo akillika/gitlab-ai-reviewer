@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
+import { validateGitLabUrl } from '../utils/validateUrl';
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const URL_REGEX = /^https?:\/\/[^\s/$.?#].[^\s]*$/i;
@@ -53,6 +54,9 @@ export function validateTokenConfig(req: Request, res: Response, next: NextFunct
   // Sanitize: strip trailing slash from base URL
   req.body.gitlabBaseUrl = gitlabBaseUrl.trim().replace(/\/+$/, '');
   req.body.gitlabToken = gitlabToken.trim();
+
+  // Block private/internal network URLs (SSRF protection)
+  validateGitLabUrl(req.body.gitlabBaseUrl);
 
   next();
 }

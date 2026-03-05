@@ -28,7 +28,10 @@
       "Bash(export PATH=\"/opt/homebrew/bin:$PATH\")",
       "Bash(/opt/homebrew/bin/node:*)",
       "Bash(/opt/homebrew/bin/npx tsc --noEmit)",
-      "Bash(echo:*)"
+      "Bash(echo:*)",
+      "Bash(grep:*)",
+      "Bash(npm test:*)",
+      "Bash(./node_modules/.bin/tsc:*)"
     ]
   }
 }
