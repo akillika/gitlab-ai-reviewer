@@ -1,0 +1,34 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install:*)",
+      "Bash(export NVM_DIR=\"$HOME/.nvm\")",
+      "Bash(. \"$NVM_DIR/nvm.sh\")",
+      "Bash(nvm use:*)",
+      "Bash(npx tsc:*)",
+      "Bash(psql:*)",
+      "Bash(npx ts-node:*)",
+      "WebFetch(domain:openai.com)",
+      "Bash(brew ls:*)",
+      "Bash(brew install:*)",
+      "Bash(npm run migrate:*)",
+      "Bash(curl:*)",
+      "Bash(python3:*)",
+      "Bash(node -e:*)",
+      "Bash(npx tsx:*)",
+      "Bash(system_profiler:*)",
+      "Bash(ollama pull:*)",
+      "Bash(ollama list:*)",
+      "Bash(redis-cli ping:*)",
+      "Bash(redis-cli:*)",
+      "Bash(source:*)",
+      "Bash(node_modules/.bin/tsc:*)",
+      "Bash(node --version:*)",
+      "Bash([ -s \"$NVM_DIR/nvm.sh\" ])",
+      "Bash(export PATH=\"/opt/homebrew/bin:$PATH\")",
+      "Bash(/opt/homebrew/bin/node:*)",
+      "Bash(/opt/homebrew/bin/npx tsc --noEmit)",
+      "Bash(echo:*)"
+    ]
+  }
+}

@@ -1,0 +1,83 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ─── Base reset & typography ─── */
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  body {
+    @apply bg-surface-secondary text-txt-primary font-sans;
+  }
+
+  .dark body {
+    @apply bg-surface-dark text-txt-dark-primary;
+  }
+
+  /* Remove default focus outlines, use custom */
+  *:focus {
+    outline: none;
+  }
+
+  *:focus-visible {
+    @apply ring-2 ring-accent/40 ring-offset-1;
+  }
+
+  /* Scrollbar styling — thin & subtle */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    @apply bg-transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply bg-txt-tertiary/30 rounded-full;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-txt-tertiary/50;
+  }
+}
+
+/* ─── Utility classes ─── */
+@layer utilities {
+  /* Glass surface for overlays */
+  .glass {
+    @apply bg-white/80 backdrop-blur-surface;
+  }
+  .dark .glass {
+    @apply bg-surface-dark/80;
+  }
+
+  /* Shimmer loading skeleton */
+  .shimmer {
+    background: linear-gradient(
+      90deg,
+      #F5F5F7 25%,
+      #EBEBED 37%,
+      #F5F5F7 63%
+    );
+    background-size: 200% 100%;
+    @apply animate-shimmer rounded-lg;
+  }
+
+  .dark .shimmer {
+    background: linear-gradient(
+      90deg,
+      #2C2C2E 25%,
+      #3A3A3C 37%,
+      #2C2C2E 63%
+    );
+    background-size: 200% 100%;
+  }
+
+  /* Monospace diff line numbers */
+  .line-number {
+    @apply font-mono text-code text-txt-tertiary select-none tabular-nums;
+    min-width: 3.5rem;
+  }
+}
