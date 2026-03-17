@@ -42,7 +42,7 @@ Automatically detects when code changes violate established architectural patter
 Builds a file dependency graph from imports and calculates the blast radius of changes. Flags high-impact modifications that affect 10+ dependent files.
 
 ### Duplicate Code Detection
-Uses semantic embeddings to find similar code blocks across the repository and suggests reuse opportunities when similarity exceeds 85%.
+Uses semantic embeddings to find similar code blocks across the repository and suggests reuse opportunities when similarity exceeds 92%.
 
 ### AI-Generated Test Suggestions
 Generates targeted test case ideas covering edge cases, error handling, null inputs, and concurrency scenarios for changed code.
@@ -55,7 +55,7 @@ Produces three-perspective summaries for every MR:
 - Plus a one-liner **release note**
 
 ### Pre-Merge Quality Gates
-Configurable rules per repository that can block merges based on risk score thresholds or major issue counts — enforcing code quality standards before code lands.
+Configurable rules per repository that flag MRs based on risk score thresholds or major issue counts. Currently advisory — reports pass/fail in the dashboard but does not enforce merge blocking in GitLab.
 
 ### Repository Health Dashboard
 Tracks code quality trends over time with risk score history, severity distribution charts, and improvement indicators across reviews.

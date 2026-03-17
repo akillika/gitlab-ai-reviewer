@@ -5,7 +5,7 @@
  * 1. Extracts the added lines from the diff.
  * 2. Generates an embedding for the added code block.
  * 3. Queries pgvector for the top 3 most similar chunks in the repo.
- * 4. If cosine similarity >= threshold (0.85), and the match is a DIFFERENT file,
+ * 4. If cosine similarity >= threshold (0.92), and the match is a DIFFERENT file,
  *    produces a "suggestion" comment advising reuse.
  *
  * Graceful degradation: if embedding or search fails, returns empty array.
@@ -16,12 +16,29 @@ import { searchSimilarChunks, ChunkRow } from './repoService';
 import { AIReviewComment, DiffChunk } from '../ai/types';
 import { logger } from '../utils/logger';
 
-/** Minimum cosine similarity to flag as duplicate */
-const SIMILARITY_THRESHOLD = 0.85;
+/**
+ * Minimum cosine similarity to flag as duplicate.
+ * 0.92 is a high bar — at this level, the code structure and identifiers
+ * must be very similar, reducing false positives from boilerplate patterns
+ * like try-catch blocks or generic error handling.
+ */
+const SIMILARITY_THRESHOLD = 0.92;
 /** Maximum similar chunks to query per file */
 const TOP_K = 3;
 /** Minimum added lines to consider for duplicate detection */
-const MIN_ADDED_LINES = 5;
+const MIN_ADDED_LINES = 8;
+/** Minimum unique identifiers to consider meaningful (filters boilerplate) */
+const MIN_UNIQUE_IDENTIFIERS = 3;
+
+/** Common keywords that don't indicate meaningful code similarity */
+const BOILERPLATE_KEYWORDS = new Set([
+  'const', 'let', 'var', 'function', 'return', 'import', 'export', 'from',
+  'if', 'else', 'for', 'while', 'try', 'catch', 'throw', 'new', 'this',
+  'async', 'await', 'class', 'extends', 'implements', 'interface', 'type',
+  'true', 'false', 'null', 'undefined', 'void', 'string', 'number', 'boolean',
+  'error', 'err', 'data', 'result', 'response', 'request', 'req', 'res',
+  'console', 'log', 'warn', 'info', 'push', 'map', 'filter', 'reduce',
+]);
 
 /**
  * Extract only the added lines ('+' lines) from a unified diff, stripping the
@@ -55,6 +72,17 @@ export async function detectDuplicates(
 
       // Skip files with too few added lines — not enough signal
       if (addedLines.length < MIN_ADDED_LINES) {
+        continue;
+      }
+
+      // Filter boilerplate: require minimum unique identifiers.
+      // This avoids flagging generic try-catch, if-else, or import blocks.
+      const identifiers = new Set(
+        addedCode.match(/\b[a-zA-Z_]\w{2,}\b/g)?.filter(
+          (w) => !BOILERPLATE_KEYWORDS.has(w.toLowerCase())
+        ) || []
+      );
+      if (identifiers.size < MIN_UNIQUE_IDENTIFIERS) {
         continue;
       }
 

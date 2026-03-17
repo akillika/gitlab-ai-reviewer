@@ -122,6 +122,7 @@ export interface RiskSummary {
   total_minor: number;
   total_suggestion: number;
   overall_risk_score: number;
+  weighted_score: number;
 }
 
 export interface TestSuggestion {
@@ -245,11 +246,11 @@ export function getRepoIndexStatus(projectId: number, gitlabBaseUrl: string) {
   });
 }
 
-export function triggerRepoIndexing(projectId: number, gitlabBaseUrl: string, branch: string) {
+export function triggerRepoIndexing(projectId: number, branch: string, forceFullIndex: boolean = false) {
   return api.post<{ message: string; repoId?: string }>('/repos/trigger-index', {
     projectId,
-    gitlabBaseUrl,
     branch,
+    forceFullIndex,
   });
 }
 

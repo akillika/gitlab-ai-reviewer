@@ -1,16 +1,19 @@
 /**
- * aiGateService.ts — Pre-merge AI gate logic.
+ * aiGateService.ts — Pre-merge AI gate (advisory).
  *
- * Evaluates whether an MR should be blocked based on configurable thresholds
- * stored in `repo_settings`. The gate checks:
+ * Evaluates MR quality against configurable thresholds stored in `repo_settings`.
+ * NOTE: This gate is advisory — it reports status to the frontend but does NOT
+ * enforce merge blocking via the GitLab API. To enforce blocking, integrate
+ * with GitLab's external approval rules or pipeline status checks.
  *
- * 1. block_on_major: If true, blocks any MR with ≥1 major severity comment.
- * 2. max_allowed_risk_score: If > 0, blocks any MR with risk score ≤ threshold.
- *    (Lower risk score = higher risk. E.g., max_allowed=50 means block if score < 50.)
+ * Checks:
+ * 1. block_on_major: Flags MRs with ≥1 major severity comment.
+ * 2. min_risk_score: Flags MRs with risk score below this threshold.
+ *    (Higher risk score = safer. E.g., min_risk_score=50 means flag if score < 50.)
  *
  * Gate status:
  * - "pass"    — All checks passed, safe to merge.
- * - "fail"    — One or more checks failed, should not merge without resolution.
+ * - "fail"    — One or more checks failed (advisory — does not block merge in GitLab).
  * - "warn"    — No blocking rules configured, but risk indicators detected.
  * - "no_gate" — No repo settings configured (gate not enabled).
  */
@@ -139,15 +142,18 @@ export async function evaluateGate(
       if (!passed) hasFailed = true;
     }
 
-    // Check 2: Risk score threshold
+    // Check 2: Minimum risk score threshold
+    // Risk score is 0-100 where 100 = no issues, 0 = critical.
+    // If min threshold is 50, MRs scoring below 50 are flagged.
     if (settings.max_allowed_risk_score > 0) {
-      const passed = summary.overall_risk_score >= settings.max_allowed_risk_score;
+      const minScore = settings.max_allowed_risk_score;
+      const passed = summary.overall_risk_score >= minScore;
       checks.push({
-        name: 'Risk Score Threshold',
+        name: 'Minimum Risk Score',
         passed,
         message: passed
-          ? `Risk score ${summary.overall_risk_score} meets minimum threshold of ${settings.max_allowed_risk_score}.`
-          : `Risk score ${summary.overall_risk_score} is below minimum threshold of ${settings.max_allowed_risk_score}.`,
+          ? `Risk score ${summary.overall_risk_score}/100 meets minimum threshold of ${minScore}.`
+          : `Risk score ${summary.overall_risk_score}/100 is below minimum threshold of ${minScore}. Higher score = safer.`,
       });
       if (!passed) hasFailed = true;
     }

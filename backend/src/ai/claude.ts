@@ -153,20 +153,43 @@ function buildBatchReviewPrompt(
 // --- RAG context retrieval ---
 
 /**
- * Retrieves relevant code context from the indexed repository for a diff chunk.
- * Embeds the diff text, then queries pgvector for the top-k similar code chunks.
+ * Retrieves relevant code context from the indexed repository.
+ *
+ * Strategy: embed the *clean added code* (with diff markers stripped) rather than
+ * the raw diff. Raw diffs have +/- markers and hunk headers that distort
+ * embedding similarity vs. indexed baseline code. By stripping diff syntax
+ * and prepending the file path, the embedding aligns with how repo chunks
+ * were indexed ("File: path\n\ncode").
  */
 async function retrieveContext(
   repoId: string,
-  diffText: string,
+  diffChunks: DiffChunk[],
   limit: number = 5
 ): Promise<ChunkRow[]> {
   try {
-    // Truncate diff for embedding — we just need the semantic gist
-    const textForEmbedding = diffText.substring(0, 2000);
+    // Build clean code text from added lines (strip diff markers)
+    const cleanParts: string[] = [];
+    for (const chunk of diffChunks) {
+      const addedLines = chunk.diff
+        .split('\n')
+        .filter((line) => line.startsWith('+') && !line.startsWith('+++'))
+        .map((line) => line.substring(1));
+      if (addedLines.length > 0) {
+        cleanParts.push(`File: ${chunk.filePath}\n\n${addedLines.join('\n')}`);
+      }
+    }
+
+    if (cleanParts.length === 0) return [];
+
+    // Truncate to embedding input limit
+    const textForEmbedding = cleanParts.join('\n\n').substring(0, 2000);
     const embedding = await generateEmbedding(textForEmbedding);
     const chunks = await searchSimilarChunks(repoId, embedding, limit);
-    return chunks;
+
+    // Filter out chunks from the same files being changed — we want
+    // surrounding context, not the code being reviewed.
+    const changedFiles = new Set(diffChunks.map((c) => c.filePath));
+    return chunks.filter((c) => !changedFiles.has(c.file_path));
   } catch (error) {
     logger.warn('Failed to retrieve RAG context, proceeding without it', {
       repoId,
@@ -205,6 +228,32 @@ const LOW_VALUE_PATTERNS = [
 function isLowValueComment(comment: AIReviewComment): boolean {
   const text = comment.comment;
   return LOW_VALUE_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+// --- Token budget management ---
+
+/**
+ * Rough token estimation: ~4 chars per token for English prose,
+ * but code/diffs average ~3 chars per token due to operators, short names, etc.
+ */
+const CHARS_PER_TOKEN = 3;
+
+/** Reserve tokens for the response */
+const RESPONSE_TOKEN_RESERVE = 4096;
+
+/**
+ * Context window limits by model family.
+ * Conservative estimates to avoid hitting the exact limit.
+ */
+function getModelContextLimit(model: string): number {
+  if (model.includes('gpt-4o') || model.includes('gpt-4.1')) return 120000;
+  if (model.includes('gpt-4-turbo')) return 120000;
+  if (model.includes('gpt-4')) return 7500; // gpt-4 base 8K, leave margin
+  return 120000; // default to large for newer models
+}
+
+function estimateTokens(text: string): number {
+  return Math.ceil(text.length / CHARS_PER_TOKEN);
 }
 
 // --- Review orchestration ---
@@ -303,23 +352,45 @@ export async function reviewDiffs(
       // Retrieve RAG context if repo is indexed
       let repoChunks: ChunkRow[] = [];
       if (context.repoId) {
-        // For single file: embed the diff of that file
-        // For batch: combine diff snippets
-        const diffForContext = task.chunks
-          .map((c) => `${c.filePath}\n${c.diff.substring(0, 500)}`)
-          .join('\n');
-        repoChunks = await retrieveContext(context.repoId, diffForContext, 5);
+        repoChunks = await retrieveContext(context.repoId, task.chunks, 5);
         if (repoChunks.length > 0) {
           logger.info(`Retrieved ${repoChunks.length} context chunks for task ${i + 1}`);
         }
       }
 
       // Build prompt
-      const userMessage = task.isSingleFile
+      let userMessage = task.isSingleFile
         ? buildFileReviewPrompt(task.chunks[0], context, repoChunks)
         : buildBatchReviewPrompt(task.chunks, context, repoChunks);
 
-      logger.info(`Prompt length: ${SYSTEM_PROMPT.length + userMessage.length} chars`);
+      // Token budget check: ensure prompt fits within context window
+      const modelLimit = getModelContextLimit(config.openai.reviewModel);
+      const systemTokens = estimateTokens(SYSTEM_PROMPT);
+      let userTokens = estimateTokens(userMessage);
+      const availableForPrompt = modelLimit - RESPONSE_TOKEN_RESERVE;
+
+      if (systemTokens + userTokens > availableForPrompt) {
+        logger.warn(`Prompt exceeds token budget (est. ${systemTokens + userTokens} tokens, limit ${availableForPrompt}). Trimming RAG context.`, {
+          taskLabel: task.label,
+        });
+
+        // First: retry without RAG context
+        userMessage = task.isSingleFile
+          ? buildFileReviewPrompt(task.chunks[0], context, [])
+          : buildBatchReviewPrompt(task.chunks, context, []);
+        userTokens = estimateTokens(userMessage);
+
+        if (systemTokens + userTokens > availableForPrompt) {
+          // Still too large: truncate the diff itself
+          const maxUserChars = (availableForPrompt - systemTokens) * CHARS_PER_TOKEN;
+          userMessage = userMessage.substring(0, maxUserChars);
+          logger.warn(`Diff too large even without RAG, truncated to ${maxUserChars} chars`, {
+            taskLabel: task.label,
+          });
+        }
+      }
+
+      logger.info(`Prompt size: ${SYSTEM_PROMPT.length + userMessage.length} chars (~${systemTokens + estimateTokens(userMessage)} tokens, limit ${availableForPrompt})`);
 
       // Call OpenAI
       const result: ChatCompletionResult = await openaiChatCompletion(
@@ -330,7 +401,7 @@ export async function reviewDiffs(
         {
           model: config.openai.reviewModel,
           temperature: 0.2,
-          maxTokens: 4096,
+          maxTokens: RESPONSE_TOKEN_RESERVE,
         }
       );
 

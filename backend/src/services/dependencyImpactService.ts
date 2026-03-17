@@ -7,6 +7,12 @@
  * the changed files. High impact radius suggests the change needs extra
  * scrutiny.
  *
+ * LIMITATIONS:
+ * - Only tracks JavaScript/TypeScript imports (ES6 import, CommonJS require, dynamic import).
+ * - Only resolves relative imports (./  ../) — bare imports (node_modules) are skipped.
+ * - Path aliases (e.g., @utils/foo, ~components/bar) are not resolved.
+ * - Impact radius is a lower bound — actual impact may be higher due to untracked deps.
+ *
  * The graph is stored in `repo_dependency_graph` as edge pairs
  * (source_file -> target_file).
  */
@@ -223,9 +229,10 @@ async function getDirectDependents(
 
 /**
  * BFS to find all transitive dependents of the given files.
- * Caps at MAX_BFS_DEPTH to avoid infinite loops in circular dependencies.
+ * Uses visited-set to handle circular dependencies (not depth limit).
+ * MAX_BFS_DEPTH is a safety cap to avoid runaway traversal in huge repos.
  */
-const MAX_BFS_DEPTH = 5;
+const MAX_BFS_DEPTH = 15;
 
 async function getTransitiveDependents(
   repoId: string,

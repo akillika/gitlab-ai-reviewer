@@ -82,7 +82,9 @@ export function RepoIndexStatusCard({ projectId, gitlabBaseUrl, branch }: RepoIn
     setTriggering(true);
     setError('');
     try {
-      await triggerRepoIndexing(projectId, gitlabBaseUrl, branch);
+      // Force full re-index when repo was previously indexed
+      const isReindex = status?.indexing_status === 'completed' || status?.indexing_status === 'failed';
+      await triggerRepoIndexing(projectId, branch, isReindex);
       // Start polling for updates
       await fetchStatus();
       startPolling();

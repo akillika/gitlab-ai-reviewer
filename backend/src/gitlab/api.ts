@@ -92,7 +92,7 @@ export async function getRepoTree(
   branch: string,
   page: number = 1,
   perPage: number = 100
-): Promise<TreeItem[]> {
+): Promise<{ items: TreeItem[]; nextPage: number | null }> {
   const response = await client.get<TreeItem[]>(
     `/projects/${projectId}/repository/tree`,
     {
@@ -104,7 +104,13 @@ export async function getRepoTree(
       },
     }
   );
-  return response.data;
+
+  // GitLab returns pagination info in response headers.
+  // x-next-page is empty string when there are no more pages.
+  const nextPageHeader = response.headers['x-next-page'];
+  const nextPage = nextPageHeader ? parseInt(nextPageHeader, 10) : null;
+
+  return { items: response.data, nextPage: Number.isNaN(nextPage) ? null : nextPage };
 }
 
 export async function getFileRaw(

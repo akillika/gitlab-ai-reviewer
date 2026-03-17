@@ -48,7 +48,9 @@ const BASE_DELAY_MS = 1000;
 
 function isRetryableError(error: unknown): boolean {
   if (error instanceof OpenAI.APIError) {
-    // 429 = rate limit, 500/502/503 = server errors
+    // 429 = rate limit, 500/502/503 = server errors — retryable
+    // 400 = bad request (e.g., token limit exceeded) — NOT retryable
+    // 401 = auth error — NOT retryable
     return error.status === 429 || error.status === 500 || error.status === 502 || error.status === 503;
   }
   // Network errors

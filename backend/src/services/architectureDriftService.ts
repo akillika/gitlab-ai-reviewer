@@ -235,9 +235,39 @@ export async function getArchitectureProfiles(
 // --- Drift detection (used during MR review) ---
 
 /**
+ * Strip single-line comments, multi-line comments, and string literals
+ * from code so that regex drift patterns don't match inside them.
+ */
+function stripCommentsAndStrings(code: string): string {
+  return code
+    // Multi-line comments: /* ... */
+    // Preserve newlines so line count stays 1:1 with original
+    .replace(/\/\*[\s\S]*?\*\//g, (match) => match.replace(/[^\n]/g, ' '))
+    // Single-line comments: // ...
+    // Be careful not to match // inside strings — since we strip comments first
+    // and strings after, URLs like "https://..." may get partially mangled.
+    // This is acceptable for heuristic drift detection.
+    .replace(/\/\/.*$/gm, '')
+    // Hash comments: # ... (Python, Ruby, etc.)
+    .replace(/#.*$/gm, '')
+    // Template literals: `...` (single-line only to preserve line count)
+    .replace(/`[^`\n]*`/g, '""')
+    // Double-quoted strings
+    .replace(/"(?:[^"\\\n]|\\.)*"/g, '""')
+    // Single-quoted strings
+    .replace(/'(?:[^'\\\n]|\\.)*'/g, "''");
+}
+
+/** Minimum confidence to use a file's primary role for drift detection */
+const MIN_DRIFT_CONFIDENCE = 0.5;
+
+/**
  * Detect architectural drift in MR changes.
  * Compares added code against the file's established architectural role.
  * Returns comments for any drift violations found.
+ *
+ * Comments and string literals are stripped before matching to avoid
+ * false positives from SQL in comments, log messages, etc.
  */
 export async function detectArchitecturalDrift(
   repoId: string,
@@ -253,15 +283,18 @@ export async function detectArchitecturalDrift(
       const patterns = profiles.get(chunk.filePath);
       if (!patterns || patterns.length === 0) continue;
 
-      // Get the primary role (highest confidence)
-      const primaryRole = patterns[0]?.role;
-      if (!primaryRole) continue;
+      // Get the primary role — require minimum confidence to avoid misclassification
+      const primary = patterns[0];
+      if (!primary || primary.confidence < MIN_DRIFT_CONFIDENCE) continue;
+      const primaryRole = primary.role;
 
       // Extract added lines from diff
       const addedLines = extractAddedLines(chunk.diff);
       if (addedLines.length === 0) continue;
 
-      const addedContent = addedLines.map((l) => l.content).join('\n');
+      // Strip comments and strings to avoid false positives
+      const rawContent = addedLines.map((l) => l.content).join('\n');
+      const cleanContent = stripCommentsAndStrings(rawContent);
 
       // Check drift rules for this role
       for (const rule of DRIFT_RULES) {
@@ -269,27 +302,30 @@ export async function detectArchitecturalDrift(
 
         // Reset regex
         rule.forbiddenPattern.lastIndex = 0;
-        const match = rule.forbiddenPattern.exec(addedContent);
+        const match = rule.forbiddenPattern.exec(cleanContent);
         if (match) {
-          // Find the line number of the match
+          // Map match offset back to original added lines for line number
           const matchOffset = match.index;
           let charCount = 0;
           let matchLineIdx = 0;
-          for (let i = 0; i < addedLines.length; i++) {
-            charCount += addedLines[i].content.length + 1; // +1 for \n
+          // Use the clean content line lengths (which may differ from raw)
+          const cleanLines = cleanContent.split('\n');
+          for (let i = 0; i < cleanLines.length; i++) {
+            charCount += cleanLines[i].length + 1;
             if (charCount > matchOffset) {
               matchLineIdx = i;
               break;
             }
           }
 
+          // Map back to original line number (clean lines are 1:1 with added lines)
           const lineNumber = addedLines[matchLineIdx]?.lineNumber || 1;
 
           driftComments.push({
             file_path: chunk.filePath,
             line_number: lineNumber,
             severity: rule.severity,
-            comment: `[DRIFT] ${rule.description} (file role: ${primaryRole})`,
+            comment: `[DRIFT] ${rule.description} (file role: ${primaryRole}, confidence: ${primary.confidence})`,
           });
 
           // One drift comment per rule per file

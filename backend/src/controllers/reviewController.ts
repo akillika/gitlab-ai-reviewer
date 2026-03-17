@@ -157,18 +157,25 @@ export async function runReview(req: AuthenticatedRequest, res: Response, next: 
     }
 
     // Validate comments against actual diff lines and snap to nearest valid line.
-    // OpenAI models are much more accurate with line numbers than local models,
-    // but we still validate with a ±5 line tolerance as a safety net.
-    const LINE_TOLERANCE = 5;
+    // Tolerance of ±3 lines — tight enough to avoid landing on unrelated code,
+    // wide enough to handle GPT's occasional off-by-one/two line numbering.
+    const LINE_TOLERANCE = 3;
     let droppedByFile = 0;
     let droppedByLine = 0;
+    let snappedCount = 0;
+    let maxSnapDistance = 0;
 
     const validatedComments = allRawComments
       .map((comment) => {
-        const diffMap = diffLineMaps.get(comment.file_path);
+        // Normalize file path: strip leading ./ for consistent matching
+        const normalizedPath = comment.file_path.replace(/^\.\//, '');
+        const diffMap = diffLineMaps.get(normalizedPath) || diffLineMaps.get(comment.file_path);
         if (!diffMap) {
           droppedByFile++;
-          logger.warn('Comment references unknown file, skipping', { filePath: comment.file_path });
+          logger.warn('Comment references unknown file, skipping', {
+            filePath: comment.file_path,
+            availableFiles: Array.from(diffLineMaps.keys()),
+          });
           return null;
         }
 
@@ -176,10 +183,12 @@ export async function runReview(req: AuthenticatedRequest, res: Response, next: 
         const nearest = findNearestDiffLine(diffMap, comment.line_number, LINE_TOLERANCE);
         if (!nearest) {
           droppedByLine++;
-          const changedLines = changedLinesMap.get(comment.file_path);
-          logger.warn('Comment line number not in diff, skipping', {
+          const changedLines = changedLinesMap.get(normalizedPath) || changedLinesMap.get(comment.file_path);
+          logger.warn('Comment line not in diff (±3 tolerance), dropping', {
             filePath: comment.file_path,
             lineNumber: comment.line_number,
+            severity: comment.severity,
+            commentPreview: comment.comment.substring(0, 80),
             nearestChangedLines: changedLines
               ? Array.from(changedLines).sort((a, b) => a - b).slice(0, 20)
               : [],
@@ -190,14 +199,18 @@ export async function runReview(req: AuthenticatedRequest, res: Response, next: 
         // Snap the comment to the resolved diff line
         const snappedLine = nearest.new_line ?? comment.line_number;
         if (snappedLine !== comment.line_number) {
-          logger.info('Snapped comment line number to nearest diff line', {
+          const distance = Math.abs(snappedLine - comment.line_number);
+          snappedCount++;
+          maxSnapDistance = Math.max(maxSnapDistance, distance);
+          logger.info('Snapped comment line number', {
             filePath: comment.file_path,
             originalLine: comment.line_number,
             snappedLine,
+            distance,
           });
         }
 
-        return { ...comment, line_number: snappedLine };
+        return { ...comment, file_path: normalizedPath, line_number: snappedLine };
       })
       .filter((c): c is NonNullable<typeof c> => c !== null);
 
@@ -206,6 +219,11 @@ export async function runReview(req: AuthenticatedRequest, res: Response, next: 
       afterValidation: validatedComments.length,
       droppedByFile,
       droppedByLine,
+      snappedCount,
+      maxSnapDistance,
+      dropRate: allRawComments.length > 0
+        ? `${Math.round(((droppedByFile + droppedByLine) / allRawComments.length) * 100)}%`
+        : '0%',
     });
 
     // --- Phase 3: Compute risk summary from validated comments ---
@@ -281,6 +299,11 @@ export async function runReview(req: AuthenticatedRequest, res: Response, next: 
       gate: gateResult,
       totalGenerated: allRawComments.length,
       totalValidated: validatedComments.length,
+      validation: {
+        droppedByFile,
+        droppedByLine,
+        snappedCount,
+      },
     });
 
     // Fire-and-forget: trigger repo indexing if needed

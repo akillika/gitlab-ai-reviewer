@@ -72,11 +72,14 @@ export function IndexProgressCard({ projectId, gitlabBaseUrl, branch, className 
     };
   }, [status?.indexing_status, fetchStatus]);
 
+  const isCompleted = status?.indexing_status === 'completed';
+
   const handleTrigger = async () => {
     setTriggering(true);
     setError('');
     try {
-      await triggerRepoIndexing(projectId, gitlabBaseUrl, branch || 'main');
+      // Force full re-index when user explicitly clicks "Re-index"
+      await triggerRepoIndexing(projectId, branch || 'main', isCompleted);
       // Start polling
       setTimeout(fetchStatus, 1000);
     } catch (err: unknown) {
@@ -111,7 +114,6 @@ export function IndexProgressCard({ projectId, gitlabBaseUrl, branch, className 
   }
 
   const isIndexing = status?.indexing_status === 'indexing';
-  const isCompleted = status?.indexing_status === 'completed';
   const isFailed = status?.indexing_status === 'failed';
   const canTrigger = !isIndexing;
   const config = statusConfig[status?.indexing_status || 'not_indexed'];

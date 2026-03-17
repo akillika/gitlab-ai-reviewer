@@ -90,6 +90,30 @@ function shouldSkipFile(item: TreeItem): boolean {
   return false;
 }
 
+/**
+ * Patterns that indicate a semantic boundary in code (function/class/method start).
+ * Used to split chunks at natural boundaries instead of arbitrary line counts.
+ */
+const BOUNDARY_PATTERNS = [
+  /^(?:export\s+)?(?:async\s+)?function\s+\w+/,            // function declarations
+  /^(?:export\s+)?(?:default\s+)?class\s+\w+/,             // class declarations
+  /^(?:export\s+)?(?:const|let|var)\s+\w+\s*=\s*(?:async\s+)?\(/, // arrow function assignments
+  /^(?:export\s+)?(?:const|let|var)\s+\w+\s*=\s*(?:async\s+)?function/, // function expression assignments
+  /^(?:async\s+)?(?:get\s+|set\s+)?\w+\s*\([^)]*\)\s*(?::\s*\w+)?\s*\{/, // class methods (trimStart already applied)
+  /^(?:export\s+)?interface\s+\w+/,                          // TS interfaces
+  /^(?:export\s+)?type\s+\w+/,                               // TS type aliases
+  /^(?:export\s+)?enum\s+\w+/,                               // TS enums
+  /^def\s+\w+/,                                              // Python functions
+  /^class\s+\w+/,                                            // Python classes
+  /^func\s+/,                                                // Go functions
+  /^pub\s+(?:async\s+)?fn\s+/,                               // Rust functions
+];
+
+function isBoundaryLine(line: string): boolean {
+  const trimmed = line.trimStart();
+  return BOUNDARY_PATTERNS.some((p) => p.test(trimmed));
+}
+
 export function chunkFileContent(filePath: string, content: string): { text: string; index: number }[] {
   const lines = content.split('\n');
 
@@ -99,20 +123,46 @@ export function chunkFileContent(filePath: string, content: string): { text: str
     return [];
   }
 
+  // Find semantic boundary lines (function/class/method starts)
+  const boundaries: number[] = [0]; // always start at line 0
+  for (let i = 1; i < lines.length; i++) {
+    if (isBoundaryLine(lines[i])) {
+      boundaries.push(i);
+    }
+  }
+
   const chunks: { text: string; index: number }[] = [];
   let chunkIndex = 0;
 
-  for (let i = 0; i < lines.length; i += LINES_PER_CHUNK) {
-    if (chunkIndex >= MAX_CHUNKS_PER_FILE) break;
+  // Build chunks from boundaries, merging small adjacent sections
+  let chunkStart = 0;
+  for (let b = 1; b <= boundaries.length; b++) {
+    const nextBoundary = b < boundaries.length ? boundaries[b] : lines.length;
+    const chunkSize = nextBoundary - chunkStart;
 
-    const chunkLines = lines.slice(i, i + LINES_PER_CHUNK);
-    const chunkText = `File: ${filePath}\n\n${chunkLines.join('\n')}`;
+    // If this chunk would be too large, split at the boundary
+    // If too small, keep accumulating until we have enough lines
+    if (chunkSize >= LINES_PER_CHUNK || b === boundaries.length) {
+      if (chunkIndex >= MAX_CHUNKS_PER_FILE) break;
 
-    // Skip empty or near-empty chunks
-    if (chunkText.trim().length < 20) continue;
+      // If chunk is much larger than LINES_PER_CHUNK, split it into sub-chunks
+      // at fixed intervals (fallback for giant functions)
+      const chunkEnd = Math.min(nextBoundary, lines.length);
+      for (let start = chunkStart; start < chunkEnd; start += LINES_PER_CHUNK) {
+        if (chunkIndex >= MAX_CHUNKS_PER_FILE) break;
 
-    chunks.push({ text: chunkText, index: chunkIndex });
-    chunkIndex++;
+        const end = Math.min(start + LINES_PER_CHUNK, chunkEnd);
+        const chunkLines = lines.slice(start, end);
+        const chunkText = `File: ${filePath}\n\n${chunkLines.join('\n')}`;
+
+        if (chunkText.trim().length < 20) continue;
+
+        chunks.push({ text: chunkText, index: chunkIndex });
+        chunkIndex++;
+      }
+
+      chunkStart = nextBoundary;
+    }
   }
 
   return chunks;
@@ -356,26 +406,28 @@ async function fetchFilteredTree(
   branch: string
 ): Promise<TreeItem[]> {
   const allItems: TreeItem[] = [];
-  let page = 1;
+  let page: number | null = 1;
 
-  while (allItems.length < MAX_FILES) {
-    const items = await getRepoTree(client, projectId, branch, page, 100);
+  while (page !== null && allItems.length < MAX_FILES) {
+    const result = await getRepoTree(client, projectId, branch, page, 100);
 
-    if (items.length === 0) break;
-
-    for (const item of items) {
+    for (const item of result.items) {
       if (!shouldSkipFile(item)) {
         allItems.push(item);
         if (allItems.length >= MAX_FILES) break;
       }
     }
 
-    page++;
+    // Use GitLab's x-next-page header to determine if more pages exist
+    page = result.nextPage;
 
     // Small delay between pagination requests
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    if (page !== null) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
   }
 
+  logger.info(`Tree fetch complete: ${allItems.length} indexable files found across all pages`);
   return allItems;
 }
 

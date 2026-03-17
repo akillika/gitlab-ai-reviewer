@@ -58,7 +58,7 @@ export async function triggerIndexing(req: AuthenticatedRequest, res: Response, 
   try {
     if (!req.user) throw new AppError(401, 'Not authenticated');
 
-    const { projectId, branch } = req.body;
+    const { projectId, branch, forceFullIndex } = req.body;
 
     if (!projectId || !branch) {
       throw new AppError(400, 'Missing projectId or branch');
@@ -91,8 +91,8 @@ export async function triggerIndexing(req: AuthenticatedRequest, res: Response, 
       triggeredByUserId: req.user.userId,
     });
 
-    // Determine if incremental
-    const isIncremental = !!(repo.last_indexed_commit_sha && repo.indexing_status !== 'failed');
+    // Determine if incremental — force full re-index if explicitly requested
+    const isIncremental = !forceFullIndex && !!(repo.last_indexed_commit_sha && repo.indexing_status !== 'failed');
 
     // Enqueue the job
     await enqueueIndexingJob({
